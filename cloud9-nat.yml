@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Cloud9 Environment with Prefix for Resource Names
+
+Parameters:
+  Prefix:
+    Type: String
+    Default: "nakano-taichi-development-environment"
+    Description: "Prefix for resource names"
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${Prefix}-VPC"
+
+  # Public Subnet for NAT Gateway
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${Prefix}-PublicSubnet"
+
+  # Private Subnet for Cloud9
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      Tags:
+        - Key: Name
+          Value: !Sub "${Prefix}-PrivateSubnet"
+
+  # Elastic IP for NAT Gateway
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${Prefix}-ElasticIP"
+
+  # NAT Gateway in Public Subnet
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt ElasticIP.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub "${Prefix}-NATGateway"
+
+  # Cloud9 Environment in Private Subnet
+  Cloud9Environment:
+    Type: 'AWS::Cloud9::EnvironmentEC2'
+    Properties:
+      Name: !Sub "${Prefix}-Cloud9Environment"
+      InstanceType: t2.micro # 必要に応じてインスタンスタイプを変更
+      SubnetId: !Ref PrivateSubnet
+      AutomaticStopTimeMinutes: 30
+      ConnectionType: "SSM"
+
+  # IAM Role for Cloud9 to use SSM
+  Cloud9Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: Cloud9SSMPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:*
+                  - ec2messages:*
+                  - cloudwatch:PutMetricData
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: !Sub "${Prefix}-Cloud9Role"
+
+  # Instance Profile for Cloud9 IAM Role
+  Cloud9InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: Cloud9Role
+
+  # Security Group for Cloud9
+  Cloud9SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Cloud9 Security Group
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${Prefix}-Cloud9SG"
+
+Outputs:
+  Cloud9EnvironmentID:
+    Description: Cloud9 Environment ID
+    Value: !Ref Cloud9Environment
+  NATGatewayID:
+    Description: NAT Gateway ID
+    Value: !Ref NATGateway
